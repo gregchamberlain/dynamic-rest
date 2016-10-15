@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import mongoose from 'mongoose';
 import Collection from '../models/Collection';
+import onFinished from 'on-finished';
 
 const router = Router({ mergeParams: true });
 
@@ -13,6 +14,15 @@ const parseShape = shape => {
   return modelSchema;
 };
 
+const mongooseCleanup = () => {
+  console.log('cleaning up mongoose');
+  Object.keys(mongoose.connection.models).forEach(key => {
+    if (key !== '__COLLECTION__' && key !== '__PROJECT__') {
+      delete mongoose.connection.models[key];
+    }
+  });
+};
+
 router.get('/', (req, res) => {
   res.send(`${req.params.projectId}\'s API!'`);
 });
@@ -23,18 +33,14 @@ router.use('/:collectionName', (req, res, next) => {
     (err, collection) => {
       if (err) return res.send(err);
       if (!collection) return res.status(404).send('That Collection does not exist!');
+      // Dynamically creates model from schema stored in DB
       const Model = mongoose.model(
         `${collection.projectId}:${collection.name}`,
         parseShape(collection.shape)
       );
       req.Model = Model;
-      res.on('finish', () => {
-        console.log('cleaning up mongoose');
-        Object.keys(mongoose.connection.models).forEach(key => {
-          if (key !== '__COLLECTION__' && key !== '__PROJECT__') {
-            delete mongoose.connection.models[key];
-          }
-        });
+      onFinished(res, (err2, res2) => {
+        mongooseCleanup();
       });
       next();
     }
@@ -48,11 +54,28 @@ router.get('/:collectionName', (req, res) => {
   });
 });
 
+router.get('/:collectionName/:id', (req, res) => {
+  req.Model.findOne({ _id: req.params.id }, (err, document) => {
+    if (!err) {
+      if (document) {
+        res.send(document);
+      } else {
+        res.send('Not Found', 404);
+      }
+    } else {
+      res.send(err);
+    }
+  });
+});
+
 router.post('/:collectionName', (req, res) => {
   const document = new req.Model(req.body);
   document.save(err => {
-    if (err) return res.send(err);
-    res.send(document);
+    if (!err) {
+      res.send(document);
+    } else {
+      res.send(err);
+    }
   });
 });
 
